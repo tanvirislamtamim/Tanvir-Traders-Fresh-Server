@@ -16,19 +16,33 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5001;
 
-// Connect to MongoDB
-connectDB();
-
 // Middlewares
 app.use(
   cors({
-    origin: '*',
+    origin: true, // Dynamically reflects origin and allows credentials without wildcard conflict
     credentials: true,
   })
 );
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan('dev'));
+
+// Ensure DB is ready before handling database routes (prevents Mongoose buffering timeout)
+app.use(async (req, res, next) => {
+  if (req.path === '/api/health' || req.path === '/' || req.method === 'OPTIONS') {
+    return next();
+  }
+  try {
+    await connectDB();
+    next();
+  } catch (err: any) {
+    console.error('[DB Middleware Error]:', err?.message || err);
+    res.status(503).json({
+      success: false,
+      message: 'Database connection error: ' + (err?.message || 'Database unavailable'),
+    });
+  }
+});
 
 // API Routes
 app.use('/api/products', productRoutes);
@@ -54,11 +68,21 @@ app.get("/", (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`====================================================`);
-  console.log(`  TANVIR TRADERS - MEGHNA BEVERAGE LTD (FRESH) DEALERSHIP   `);
-  console.log(`  Backend server running on http://localhost:${PORT}`);
-  console.log(`====================================================`);
-});
+const startServer = async () => {
+  try {
+    await connectDB();
+  } catch (err: any) {
+    console.warn(`[Startup Notice] DB connection will retry on request: ${err.message}`);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`====================================================`);
+    console.log(`  TANVIR TRADERS - MEGHNA BEVERAGE LTD (FRESH) DEALERSHIP   `);
+    console.log(`  Backend server running on http://localhost:${PORT}`);
+    console.log(`====================================================`);
+  });
+};
+
+startServer();
 
 export default app;
