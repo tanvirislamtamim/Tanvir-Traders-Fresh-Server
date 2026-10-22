@@ -335,10 +335,19 @@ export const saveDailySale = async (req: Request, res: Response): Promise<void> 
       grandTotalPcs += totalPcsSold;
       grandTotalCartons += qtyCartons + qtyPcs / cartonSize;
 
-      // DEDUCT from product inventory
-      await Product.findByIdAndUpdate(product._id, {
-        $inc: { currentStockPcs: -totalPcsSold },
-      });
+      // DEDUCT from product inventory with atomic non-negative stock verification
+      const updatedProduct = await Product.findOneAndUpdate(
+        { _id: product._id, currentStockPcs: { $gte: totalPcsSold } },
+        { $inc: { currentStockPcs: -totalPcsSold } },
+        { new: true }
+      );
+      if (!updatedProduct) {
+        res.status(400).json({
+          success: false,
+          message: `"${product.name}" পণ্যের স্টক শূন্য বা অপর্যাপ্ত! স্টক ছাড়া কোনো পণ্য বিক্রয় করা যাবে না।`,
+        });
+        return;
+      }
     }
 
     if (existingSale) {

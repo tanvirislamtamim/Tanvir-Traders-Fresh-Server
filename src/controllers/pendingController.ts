@@ -102,6 +102,25 @@ export const approvePendingAction = async (req: Request, res: Response): Promise
           }
         }
 
+        // Pre-validate that all products have enough stock before making any DB updates
+        for (const item of items) {
+          const qtyCartons = Number(item.quantityCartons) || 0;
+          const qtyPcs = Number(item.quantityPcs) || 0;
+          const reqPcs = qtyCartons * Number(item.cartonSize || 24) + qtyPcs;
+          if (reqPcs > 0) {
+            const product = await Product.findById(item.productId);
+            if (!product) continue;
+            const currentStock = product.currentStockPcs || 0;
+            if (currentStock <= 0 || currentStock < reqPcs) {
+              res.status(400).json({
+                success: false,
+                message: `অনুমোদন ব্যর্থ! "${product.name}" পণ্যের স্টক শূন্য বা অপর্যাপ্ত (বর্তমান মজুদ: ${currentStock} পিস, বিক্রয় চেয়েছেন: ${reqPcs} পিস)। স্টক ছাড়া বিক্রয় অনুমোদন করা যাবে না।`,
+              });
+              return;
+            }
+          }
+        }
+
         // Process items & deduct inventory
         const processedItems = [];
         let grandTotalAmount = 0;
@@ -147,10 +166,19 @@ export const approvePendingAction = async (req: Request, res: Response): Promise
             grandTotalPcs += actualTotalPcs;
             grandTotalCartons += qtyCartons + qtyPcs / cartonSize;
 
-            // Deduct stock
-            await Product.findByIdAndUpdate(product._id, {
-              $inc: { currentStockPcs: -actualTotalPcs },
-            });
+            // Deduct stock with atomic non-negative verification
+            const updatedProduct = await Product.findOneAndUpdate(
+              { _id: product._id, currentStockPcs: { $gte: actualTotalPcs } },
+              { $inc: { currentStockPcs: -actualTotalPcs } },
+              { new: true }
+            );
+            if (!updatedProduct) {
+              res.status(400).json({
+                success: false,
+                message: `অনুমোদন ব্যর্থ! "${product.name}" পণ্যের স্টক শূন্য বা অপর্যাপ্ত।`,
+              });
+              return;
+            }
           }
         }
 
